@@ -1,7 +1,7 @@
 """FastAPI surface for the data pipeline. Run: uvicorn finn.api:app --reload"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -14,7 +14,7 @@ from .config import IST
 from .errors import FinnError, NotFound, ParseError, SourceUnavailable
 from .http import HttpClient
 from .log import setup_logging
-from .models import Exchange
+from .models import Exchange, StatementBasis
 from .pipeline import Pipeline
 
 setup_logging()
@@ -138,6 +138,20 @@ def download(doc_id: int, p: Pipeline = Depends(get_pipeline)):
 @app.get("/api/sources")
 def sources(p: Pipeline = Depends(get_pipeline)):
     return repo.source_status(p.conn)
+
+
+@app.get("/api/results/{symbol}")
+def results(symbol: str, period_end: str | None = Query(None, description="YYYY-MM-DD quarter end; default latest"),
+            basis: StatementBasis = StatementBasis.CONSOLIDATED, p: Pipeline = Depends(get_pipeline)):
+    from .results.service import ResultsService
+
+    try:
+        pe = date.fromisoformat(period_end) if period_end else None
+    except ValueError:
+        raise HTTPException(422, "period_end must be YYYY-MM-DD")
+    card = ResultsService(p.http).card(symbol, pe, basis)
+    repo.log_fetch(p.conn, "nse_xbrl", symbol.upper(), True, card.current.fiscal_label)
+    return card
 
 
 _probe_cache: dict = {}

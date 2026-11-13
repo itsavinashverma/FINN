@@ -135,6 +135,9 @@ def test_title_fallback_when_size_missing():
     ("Shareholders meeting", "Notice of Postal Ballot dated November 4, 2026", Category.POSTAL_BALLOT),
     ("Corrigendum", "Corrigendum to Notice of Extra Ordinary General Meeting", Category.AGM_EGM),
     ("Disclosure under SEBI Takeover Regulations", "Disclosure under Regulation 31", Category.INSIDER_TRADING),
+    ("Company Update / General", "The Exchange has received the disclosure under Regulation 29(2) of SEBI "
+     "(Substantial Acquisition of Shares & Takeovers) Regulations, 2011 for Ms. X & PACs", Category.INSIDER_TRADING),
+    ("General Updates", "Intimation of board meeting under Regulation 29 of SEBI LODR to consider acquisition of ABC Ltd", Category.MA),
     ("General Updates", "Creation of pledge on promoter shares", Category.PLEDGING),
     ("Copy of Newspaper Publication", "Copy of Newspaper Publication", Category.UNCLASSIFIED),
     ("ESOP/ESOS/ESPS", "Allotment of 4,25,822 Equity Shares upon exercise of vested options", Category.UNCLASSIFIED),

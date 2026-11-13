@@ -1,6 +1,9 @@
 """FastAPI surface for the data pipeline. Run: uvicorn finn.api:app --reload"""
 from __future__ import annotations
 
+import os
+import threading
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterator
 
@@ -16,22 +19,34 @@ from .http import HttpClient
 from .log import setup_logging
 from .models import Exchange, StatementBasis
 from .pipeline import Pipeline
+from .refresher import Refresher
+from . import digest as digest_mod, portfolio
+from .market.metrics import compute_metrics
 
 setup_logging()
-app = FastAPI(title="FINN data API", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
 _http = HttpClient()
-_market = None  # shared YahooProvider, created lazily by the first Pipeline that needs it
+_shared: dict = {"market": None}  # YahooProvider, created lazily, shared by requests and the refresher
+refresher = Refresher(_http, _shared)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    if os.getenv("FINN_REFRESHER", "1") == "1":
+        refresher.start()
+    yield
+    refresher.stop()
+
+
+app = FastAPI(title="FINN API", version="0.2.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 def get_pipeline() -> Iterator[Pipeline]:
-    global _market
     conn = db.connect()
     try:
-        p = Pipeline(conn, http=_http, market=_market)
+        p = Pipeline(conn, http=_http, market=_shared["market"])
         yield p
-        _market = p._market or _market
+        _shared["market"] = p._market or _shared["market"]
     finally:
         conn.close()
 
@@ -152,6 +167,76 @@ def results(symbol: str, period_end: str | None = Query(None, description="YYYY-
     card = ResultsService(p.http, screener=p.documents).card(symbol, pe, basis)
     repo.log_fetch(p.conn, card.source, symbol.upper(), True, f"results {card.current.fiscal_label}")
     return card
+
+
+# ---------------------------------------------------------------- portfolio & digest
+class PortfolioUpdate(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=30)
+
+
+def _portfolio_rows(p: Pipeline) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    out = []
+    for sym in portfolio.symbols(p.conn):
+        company = repo.get_company(p.conn, sym)
+        series = repo.load_series(p.conn, sym, Exchange.NSE)
+        m = compute_metrics(series, now) if series else None
+        out.append({"symbol": sym, "name": company["name"] if company else None,
+                    "metrics": m.model_dump(mode="json") if m else None})
+    return out
+
+
+@app.get("/api/portfolio")
+def get_portfolio(p: Pipeline = Depends(get_pipeline)):
+    """Holdings with the latest *stored* EOD metrics (the refresher keeps them current)."""
+    return {"holdings": _portfolio_rows(p), "refresher": refresher.status}
+
+
+@app.put("/api/portfolio")
+def put_portfolio(body: PortfolioUpdate, p: Pipeline = Depends(get_pipeline)):
+    syms = portfolio.replace(p.conn, body.symbols)
+    threading.Thread(target=refresher.run_once, daemon=True).start()
+    return {"symbols": syms}
+
+
+@app.get("/api/digest")
+def get_digest(
+    hours: int = Query(24, ge=1, le=24 * 30),
+    start: datetime | None = Query(None, alias="from"),
+    end: datetime | None = Query(None, alias="to"),
+    with_results: bool = True,
+    p: Pipeline = Depends(get_pipeline),
+):
+    end = end or datetime.now(timezone.utc)
+    start = start or end - timedelta(hours=hours)
+    if start.tzinfo is None or end.tzinfo is None:
+        raise HTTPException(422, "'from'/'to' must include a timezone offset")
+    syms = portfolio.symbols(p.conn)
+    rows = repo.query_announcements(p.conn, start=start, end=end, symbols=syms)
+    items = digest_mod.build_items(rows)
+    if with_results:
+        from .results.service import ResultsService
+
+        svc = ResultsService(p.http, screener=p.documents)
+        for item in items:
+            if item.category == "results" and item.tier == "critical" and item.symbol:
+                try:
+                    item.results = svc.card(item.symbol).model_dump(mode="json")
+                except FinnError as e:
+                    item.results_error = str(e)
+    status = {"refresher": refresher.status, "sources": repo.source_status(p.conn)}
+    return digest_mod.assemble(items, {"from": start.isoformat(), "to": end.isoformat()}, status)
+
+
+@app.get("/api/status")
+def status(p: Pipeline = Depends(get_pipeline)):
+    return {"refresher": refresher.status, "sources": repo.source_status(p.conn)}
+
+
+@app.post("/api/refresh")
+def refresh():
+    threading.Thread(target=refresher.run_once, daemon=True).start()
+    return {"started": True, "status": refresher.status}
 
 
 _probe_cache: dict = {}

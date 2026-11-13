@@ -89,6 +89,11 @@ TEXT_RULES: list[tuple[str, C, re.Pattern]] = [
         r"integrated financial|quarterly results", re.I)),
     ("earnings_call", C.EARNINGS_CALL, re.compile(
         r"transcript|earnings call|conference call|con\.? ?call|concall|audio recording|recording of|link of recording", re.I)),
+    # Before M&A: "Substantial Acquisition of Shares and Takeovers" disclosures are shareholding changes.
+    # ("Regulation 29" alone is ambiguous: LODR Reg 29 is the board-meeting intimation.)
+    ("insider_trading", C.INSIDER_TRADING, re.compile(
+        r"insider trading|\bsast\b|substantial acquisition of shares|takeovers?\)? regulations|"
+        r"prohibition of insider|regulation 7\(2\)", re.I)),
     ("ma", C.MA, re.compile(
         r"acquisition|acquire|amalgamation|merger|demerger|joint venture|scheme of arrangement|"
         r"stake sale|divest|wholly[- ]owned subsidiary.*(incorporat|invest)", re.I)),
@@ -101,8 +106,6 @@ TEXT_RULES: list[tuple[str, C, re.Pattern]] = [
         r"(director|ceo|cfo|coo|chief|managing|\bmd\b|chairman|chairperson|kmp|whole[- ]time|company secretary)|"
         r"(director|ceo|cfo|chief|managing director|chairman|kmp|company secretary).{0,40}\b(appoint|resign|cessation|retire)", re.I)),
     ("credit_rating", C.CREDIT_RATING, re.compile(r"credit rating|\b(crisil|icra|care ratings|india ratings)\b", re.I)),
-    ("insider_trading", C.INSIDER_TRADING, re.compile(
-        r"insider trading|\bsast\b|substantial acquisition|regulation 7\(2\)|regulation 29", re.I)),
     ("litigation", C.LITIGATION, re.compile(
         r"litigation|\bcourt\b|tribunal|\bnclt\b|penalty|show cause|order passed|insolvency|"
         r"\b(tax|gst) demand|regulatory order|\bfine[sd]?\b", re.I)),

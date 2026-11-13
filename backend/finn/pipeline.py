@@ -136,6 +136,20 @@ class Pipeline:
         report.inserted, report.updated = repo.upsert_announcements(self.conn, marked)
         return report
 
+    def reclassify_all(self) -> int:
+        """Re-apply the (deterministic) classifier to stored filings so rule fixes apply retroactively."""
+        changed = 0
+        for r in self.conn.execute("SELECT * FROM announcement").fetchall():
+            c = classify(repo.row_to_announcement(r))
+            if (c.category.value, c.method) != (r["category"], r["category_method"]):
+                self.conn.execute(
+                    """UPDATE announcement SET category=?, category_method=?, category_confidence=?, needs_review=?
+                       WHERE source=? AND source_id=?""",
+                    (c.category.value, c.method, c.confidence, int(c.needs_review), r["source"], r["source_id"]))
+                changed += 1
+        self.conn.commit()
+        return changed
+
     # ------------------------------------------------------------ documents
     def discover_documents(self, symbol: str) -> dict:
         found = self.documents.discover(symbol)

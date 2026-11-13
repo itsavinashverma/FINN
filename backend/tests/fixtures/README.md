@@ -14,4 +14,5 @@ serves them, and nothing in `finn/` reads this directory.
 | `nse_if_TCS_consolidated_2026Q2.xml` | `nsearchives…/INTEGRATED_FILING_INDAS_1734607_08102026100810_WEB.xml` | company format; values cross-checked against Screener |
 | `nse_if_TCS_consolidated_2026Q4.xml` | TCS Q4 FY26 integrated filing XBRL | Q4 layout (Jan–Mar quarter + full year) |
 | `nse_if_HDFCBANK_consolidated_2026Q2.xml` | HDFCBANK Q2 FY27 integrated filing XBRL | banking format |
+| `screener_{HDFCBANK,BAJFINANCE}_consolidated.html` | `screener.in/company/{SYM}/consolidated/` | lender table layout |
 | `nse_if_BAJFINANCE_consolidated_2026Q2.xml` | `…/INTEGRATED_FILING_NBFC_INDAS_1742040_19102026075918_WEB.xml` | NBFC format |

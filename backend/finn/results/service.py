@@ -1,7 +1,6 @@
 """Quarterly results card: current quarter vs previous quarter (QoQ) and same quarter last year (YoY)."""
 from __future__ import annotations
 
-import calendar
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -9,10 +8,11 @@ from datetime import date, datetime, timedelta
 from pydantic import BaseModel, Field
 
 from ..config import IST
-from ..errors import NotFound, ParseError
+from ..documents.screener import ScreenerDocuments
+from ..errors import NotFound, ParseError, SourceUnavailable
 from ..http import HttpClient
 from ..models import StatementBasis
-from .headline import Change, Headline, compare, compute_headline
+from .headline import Change, Headline, compare, compute_headline, quarter_end_before
 from .xbrl import format_from_url, parse_quarter
 
 log = logging.getLogger(__name__)
@@ -36,6 +36,7 @@ class FilingRef:
 
 class ResultsCard(BaseModel):
     symbol: str
+    source: str                     # "nse_xbrl" (the filing itself) | "screener" (fallback compilation)
     basis: StatementBasis
     basis_note: str | None = None
     current: Headline
@@ -83,11 +84,6 @@ def normalize_listing(rows: list[dict], symbol: str) -> list[FilingRef]:
     return sorted(best.values(), key=lambda f: (f.period_end, f.basis.value), reverse=True)
 
 
-def quarter_end_before(d: date, months: int) -> date:
-    y, m = divmod(d.year * 12 + (d.month - 1) - months, 12)
-    return date(y, m + 1, calendar.monthrange(y, m + 1)[1])
-
-
 def choose_basis(refs: list[FilingRef], period_end: date, preferred: StatementBasis) -> tuple[StatementBasis, str | None]:
     available = {f.basis for f in refs if f.period_end == period_end}
     if preferred in available:
@@ -99,8 +95,9 @@ def choose_basis(refs: list[FilingRef], period_end: date, preferred: StatementBa
 
 
 class ResultsService:
-    def __init__(self, http: HttpClient):
+    def __init__(self, http: HttpClient, screener: ScreenerDocuments | None = None):
         self.http = http
+        self.screener = screener
 
     def list_filings(self, symbol: str) -> list[FilingRef]:
         symbol = symbol.strip().upper()
@@ -128,6 +125,44 @@ class ResultsService:
 
     def card(self, symbol: str, period_end: date | None = None,
              basis: StatementBasis = StatementBasis.CONSOLIDATED) -> ResultsCard:
+        """Filing XBRL from NSE first; Screener's quarterly table only if NSE cannot be reached."""
+        try:
+            return self._card_from_nse(symbol, period_end, basis)
+        except (SourceUnavailable, NotFound) as nse_error:
+            if self.screener is None:
+                raise
+            log.info("results for %s: NSE unavailable (%s); using Screener", symbol, nse_error)
+            card = self._card_from_screener(symbol, period_end, basis)
+            card.warnings.insert(0, f"NSE filing data unavailable ({nse_error}); figures are Screener's compilation")
+            return card
+
+    def _card_from_screener(self, symbol: str, period_end: date | None, basis: StatementBasis) -> ResultsCard:
+        from ..fundamentals.screener_tables import parse_tables
+        from .screener_fallback import screener_headline
+
+        page = self.screener.page(symbol, prefer=basis, cache_ttl=timedelta(hours=1))
+        fin = parse_tables(page.text, symbol, page.url, page.fetched_at)
+        quarters = [d for d in fin.tables["quarters"].period_ends if d] if "quarters" in fin.tables else []
+        if not quarters:
+            raise NotFound(f"screener: no quarterly results for {symbol}", source="screener")
+        period_end = period_end or max(quarters)
+        current = screener_headline(fin, period_end)
+        if current is None:
+            raise NotFound(f"screener: no quarter ending {period_end} for {symbol}", source="screener")
+        warnings = []
+        basis_note = None if fin.basis is basis else f"{basis.value} figures not on Screener; showing {current.basis.value}"
+        prev_q = screener_headline(fin, quarter_end_before(period_end, 3))
+        prev_y = screener_headline(fin, quarter_end_before(period_end, 12))
+        for h, label in ((prev_q, "QoQ"), (prev_y, "YoY")):
+            if h is None:
+                warnings.append(f"{label}: comparison quarter not in Screener's table")
+        return ResultsCard(
+            symbol=symbol.upper(), source="screener", basis=current.basis, basis_note=basis_note, current=current,
+            previous_quarter=prev_q, year_ago_quarter=prev_y, qoq=compare(current, prev_q), yoy=compare(current, prev_y),
+            sources=[page.url], warnings=warnings,
+        )
+
+    def _card_from_nse(self, symbol: str, period_end: date | None, basis: StatementBasis) -> ResultsCard:
         refs = self.list_filings(symbol)
         period_end = period_end or refs[0].period_end
         chosen, basis_note = choose_basis(refs, period_end, basis)
@@ -157,7 +192,7 @@ class ResultsService:
         if current.checks:
             warnings.extend(f"consistency check failed: {c}" for c in current.checks)
         return ResultsCard(
-            symbol=symbol.upper(), basis=chosen, basis_note=basis_note, current=current,
+            symbol=symbol.upper(), source="nse_xbrl", basis=chosen, basis_note=basis_note, current=current,
             previous_quarter=prev_q, year_ago_quarter=prev_y,
             qoq=compare(current, prev_q), yoy=compare(current, prev_y),
             sources=sources, warnings=warnings,

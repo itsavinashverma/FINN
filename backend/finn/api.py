@@ -149,8 +149,8 @@ def results(symbol: str, period_end: str | None = Query(None, description="YYYY-
         pe = date.fromisoformat(period_end) if period_end else None
     except ValueError:
         raise HTTPException(422, "period_end must be YYYY-MM-DD")
-    card = ResultsService(p.http).card(symbol, pe, basis)
-    repo.log_fetch(p.conn, "nse_xbrl", symbol.upper(), True, card.current.fiscal_label)
+    card = ResultsService(p.http, screener=p.documents).card(symbol, pe, basis)
+    repo.log_fetch(p.conn, card.source, symbol.upper(), True, f"results {card.current.fiscal_label}")
     return card
 
 

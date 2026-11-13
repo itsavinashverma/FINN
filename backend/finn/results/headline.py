@@ -8,6 +8,8 @@ pre-provision operating profit / net interest income are shown instead.
 """
 from __future__ import annotations
 
+import calendar
+from datetime import date
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -42,6 +44,12 @@ class Headline(BaseModel):
 class Change(BaseModel):
     pct: float | None
     note: str | None = None         # "n.m.", "loss → profit", …
+
+
+def quarter_end_before(d: date, months: int) -> date:
+    """Month-end `months` before `d`: (2026-09-30, 3) -> 2026-06-30."""
+    y, m = divmod(d.year * 12 + (d.month - 1) - months, 12)
+    return date(y, m + 1, calendar.monthrange(y, m + 1)[1])
 
 
 def fiscal_label(period_end) -> str:

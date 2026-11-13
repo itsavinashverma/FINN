@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from .config import IST, settings
 from .http import HttpClient
 
-TCS_PDF = "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_09112026171125_SEIntimation_signed.pdf"
+
+TCS_PDF ="https://nsearchives.nseindia.com/corporate/TCS_CORPCS_09112026171125_SEIntimation_signed.pdf"
 
 
 def _check(name: str, fn) -> dict:
@@ -38,6 +39,8 @@ def run_probe() -> dict:
     checks = [
         _check("yahoo", lambda: f"{len(YahooProvider().history('TCS', Exchange.NSE, period='1mo').bars)} bars"),
         _check("nse_announcements", lambda: f"{len(NseAnnouncements(http).fetch(ref, today - timedelta(days=30), today))} items"),
+        _check("nse_results_xbrl", lambda: _nse_results(http)),
+        _check("results_card", lambda: _results_card(http)),  # end-to-end, incl. Screener fallback
         _check("bse_announcements", lambda: f"{len(BseAnnouncements(http).fetch(ref, today - timedelta(days=30), today))} items"),
         _check("screener", lambda: f"{len(ScreenerDocuments(http).discover('TCS').documents)} document links"),
         _check("nse_pdf", lambda: f"{len(http.get(TCS_PDF, source='nse_pdf').content)} bytes"),
@@ -45,6 +48,23 @@ def run_probe() -> dict:
     if settings.gemini_api_key:
         checks.append(_check("gemini", _gemini_check))
     return {"ran_at": datetime.now(timezone.utc).isoformat(), "all_ok": all(c["ok"] for c in checks), "checks": checks}
+
+
+def _nse_results(http: HttpClient) -> str:
+    from .results.service import ResultsService
+
+    svc = ResultsService(http)
+    ref = svc.list_filings("TCS")[0]
+    h = svc.headline(ref)
+    return f"{h.fiscal_label} {h.basis.value}: revenue ₹{h.metrics['revenue'].value_cr} cr"
+
+
+def _results_card(http: HttpClient) -> str:
+    from .documents.screener import ScreenerDocuments
+    from .results.service import ResultsService
+
+    c = ResultsService(http, screener=ScreenerDocuments(http)).card("TCS")
+    return f"{c.current.fiscal_label} via {c.source}: revenue ₹{c.current.metrics['revenue'].value_cr} cr, YoY {c.yoy['revenue'].pct if c.yoy else None}%"
 
 
 def _gemini_check() -> str:

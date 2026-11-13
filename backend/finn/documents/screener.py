@@ -107,16 +107,19 @@ class ScreenerDocuments:
     def __init__(self, http: HttpClient):
         self.http = http
 
-    def discover(self, symbol: str) -> CompanyDocuments:
-        """Prefer the consolidated page; fall back to standalone if consolidated is unavailable."""
+    def page(self, symbol: str, prefer: StatementBasis = StatementBasis.CONSOLIDATED,
+             cache_ttl: timedelta = timedelta(hours=12)):
+        """Fetch the company page, preferring the requested basis and falling back to the other."""
         symbol = symbol.strip().upper()
+        order = ("consolidated/", "") if prefer is StatementBasis.CONSOLIDATED else ("", "consolidated/")
         last_error: Exception | None = None
-        for suffix in ("consolidated/", ""):
-            url = BASE.format(symbol=symbol, suffix=suffix)
+        for suffix in order:
             try:
-                r = self.http.get(url, source="screener", cache_ttl=timedelta(hours=12))
+                return self.http.get(BASE.format(symbol=symbol, suffix=suffix), source="screener", cache_ttl=cache_ttl)
             except NotFound as e:
                 last_error = e
-                continue
-            return parse_company_page(r.text, symbol, r.url, r.fetched_at)
         raise NotFound(f"screener: no company page for {symbol}", source="screener") from last_error
+
+    def discover(self, symbol: str) -> CompanyDocuments:
+        r = self.page(symbol)
+        return parse_company_page(r.text, symbol.strip().upper(), r.url, r.fetched_at)

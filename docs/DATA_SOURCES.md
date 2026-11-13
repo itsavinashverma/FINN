@@ -2,7 +2,20 @@
 
 All results below were verified live on **13 Nov 2026** from a residential connection in India
 (`backend/scripts/probe_sources.py` reproduces them and writes `backend/data/source_report.json`).
-**None has been tested from a cloud host yet**: Akamai-protected sources (NSE, BSE) may behave differently there.
+
+## From the deployed host (Render, Singapore): `/api/probe`, 13 Nov 2026
+| Source | Result |
+|---|---|
+| Yahoo, BSE API + PDFs, Screener, Gemini | ✅ |
+| NSE API and `nsearchives` PDFs | ❌ HTTP 403 (bot protection blocks the cloud host) |
+
+**Decision:** we do not try to evade NSE's bot protection (e.g. by spoofing a browser's TLS fingerprint).
+On the deployed app:
+* **Announcements** come from BSE (same filings, richer categories, PDFs reachable). NSE is used where reachable
+  and is the canonical copy when both are present.
+* **Results cards** use NSE filing XBRL when reachable, otherwise Screener's quarterly table, labelled
+  `source: "screener"` with a warning. Screener matches the filing for companies (TCS, DIXON) but
+  **excludes exceptional items** from bank PBT/PAT (HDFCBANK Q2 FY27: ₹21,537 cr vs ₹20,700 cr filed).
 
 | Source | Endpoint | Status | Used for | Limitations seen |
 |---|---|---|---|---|

@@ -1,0 +1,15 @@
+# Render Blueprint: backend API on the free plan (Docker).
+# Free plan: sleeps after 15 min idle (~1 min cold start), 512 MB RAM, ephemeral disk.
+# Singapore is the closest Render region to the Indian data sources.
+services:
+  - type: web
+    name: finn-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false   # entered in the Render dashboard, never committed

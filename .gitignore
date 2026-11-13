@@ -1,0 +1,5 @@
+# Challenge brief PDFs stay local (not ours to republish)
+ENAM_*.pdf
+.env
+**/node_modules/
+**/dist/

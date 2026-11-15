@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* Surfaces: near-black, warm, layered by one step of lightness at a time. */
+  --color-bg: #0a0a0c;
+  --color-surface: #131316;
+  --color-surface-2: #1c1c20;
+  --color-border: #28282d;
+  --color-border-subtle: #1b1b1f;
+
+  /* Text: warm off-white down to a dim metadata tone. */
+  --color-ink: #f2f0ec;
+  --color-ink-dim: #a6a39c;
+  --color-ink-faint: #6c6a64;
+
+  /* One accent: muted gold, used sparingly for emphasis and active state. */
+  --color-accent: #c9a15a;
+  --color-accent-soft: #c9a15a1f;
+  --color-accent-ink: #e8c98a;
+
+  /* Semantic: desaturated so the page never looks like a slot machine. */
+  --color-up: #52a579;
+  --color-up-soft: #52a5791a;
+  --color-down: #d2694f;
+  --color-down-soft: #d2694f1a;
+  --color-critical: #cf6659;
+  --color-critical-soft: #cf66591a;
+  --color-notable: #c9a15a;
+  --color-notable-soft: #c9a15a1a;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    background: var(--color-bg);
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+    color: var(--color-ink);
+  }
+
+  /* Thin, unobtrusive scrollbars so panels don't feel like a generic OS chrome. */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 999px; }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+}

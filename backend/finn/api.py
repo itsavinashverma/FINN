@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from . import alert_repo, db, repo
 from .alerts import AlertRule
-from .config import IST
+from .config import IST, settings
 from .errors import FinnError, NotFound, ParseError, SourceUnavailable
 from .http import HttpClient
 from .log import setup_logging
@@ -424,3 +424,27 @@ def probe(force: bool = False):
     result = run_probe()
     _probe_cache.update(result=result, at=datetime.now(timezone.utc))
     return result
+
+
+# ---------------------------------------------------------------- frontend (production only)
+# Registered last so it never shadows an /api/* or /health route above. FINN_STATIC_DIR is set
+# only in the Docker image (see Dockerfile); local dev serves the frontend via `npm run dev`
+# instead, so this block is simply absent from that codepath.
+if settings.static_dir and settings.static_dir.is_dir():
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/assets", StaticFiles(directory=settings.static_dir / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    def spa(full_path: str):
+        """Any other GET is a client-side route (React Router) -- serve index.html and let the
+        browser's JS take over. A real missing file under /assets already 404s from the mount
+        above, before this catch-all is ever reached. A mistyped /api/* or /health path must
+        still 404 as a normal API error, not silently return the SPA shell with a 200."""
+        if full_path == "api" or full_path.startswith("api/") or full_path == "health":
+            raise HTTPException(404, f"/{full_path} not found")
+        candidate = settings.static_dir / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(settings.static_dir / "index.html")

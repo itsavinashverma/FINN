@@ -45,6 +45,11 @@ class Settings:
     # NSE cash market closes 15:30 IST; Yahoo's EOD bar is treated as final after this.
     session_final_after: tuple[int, int] = (16, 0)
 
+    # Built frontend (frontend/dist), served by the API itself in production so the whole app is
+    # one deployable origin -- no CORS, no separate VITE_API_BASE_URL build. None locally (the
+    # Vite dev server runs separately and proxies /api to this process; see frontend/vite.config.ts).
+    static_dir: Path | None = field(default_factory=lambda: Path(p) if (p := os.getenv("FINN_STATIC_DIR")) else None)
+
     gemini_api_key: str | None = field(default_factory=lambda: os.getenv("GEMINI_API_KEY") or None)
     # Verified 2026-11-13: gemini-2.5-* model IDs 404 for this key ("no longer available to new
     # users"); the "-latest" alias tracks whichever current model the key can use.

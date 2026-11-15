@@ -18,8 +18,13 @@ npm run dev
 ```
 
 Needs the backend running on `:8000` (see `../backend/README` at the repo root) — the Vite dev
-server proxies `/api` and `/health` to it (`vite.config.ts`). For a production build pointing at
-a separately-deployed API, set `VITE_API_BASE_URL` (see `.env.example`).
+server proxies `/api` and `/health` to it (`vite.config.ts`).
+
+In production this app is built and served *by the backend* as one deployment (see the root
+`Dockerfile` and `README.md` → Deployment) — you won't normally run `npm run build` by hand.
+`VITE_API_BASE_URL` (see `.env.example`) only matters if you deliberately host this frontend on a
+different origin than the API; the default (unset) assumes same-origin, which is what the
+Docker image does.
 
 ## Structure
 

@@ -292,6 +292,17 @@ def evidence(evidence_id: str, p: Pipeline = Depends(get_pipeline)):
     return e
 
 
+@app.get("/api/companies/{symbol}/fundamentals")
+def fundamentals(symbol: str, p: Pipeline = Depends(get_pipeline)):
+    """Trajectory and cash-quality series for the Research screen, built from Screener's tables
+    (reuses the same parser /api/results falls back to -- no new extraction)."""
+    from .fundamentals.service import get_overview
+
+    ov = get_overview(p.documents, symbol)
+    repo.log_fetch(p.conn, "screener", symbol.upper(), True, "fundamentals overview")
+    return ov
+
+
 # ---------------------------------------------------------------- alerts
 class AlertRuleCreate(BaseModel):
     kind: str = Field(pattern="^(price_move|volume_spike|category)$")

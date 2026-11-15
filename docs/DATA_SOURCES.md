@@ -45,3 +45,33 @@ On the deployed app:
 
 ## Dev-machine note
 Windows Smart App Control blocks pandas ≥ 3.1's native DLL; `pandas==2.3.3` is pinned.
+
+## PULL research engine (15 Nov 2026)
+* **PDF extraction**: benchmarked pypdf, pdfplumber and PyMuPDF on real filings. PyMuPDF won
+  decisively — a 306-page annual report: 0.8s vs pypdf's 12.9s and pdfplumber's 4.4s for only the
+  *first 15 pages*. Extraction is cached by `document.id` (keyed to the file's sha256), so
+  re-running research on an already-seen filing never re-parses it.
+* **Evidence search**: SQLite's FTS5 extension is compiled into this Python build (confirmed
+  directly, no vector DB needed) — used for lexical lookup over extracted pages.
+* **Gemini model**: `gemini-2.5-flash` and `gemini-2.5-flash-lite` both 404 for this API key
+  ("no longer available to new users"). `gemini-flash-lite-latest` works (~1.2–1.5s/call,
+  ~230 tokens/call) and is what the LLM client uses.
+* **Rate limiting**: a single `research()` call can fire ~15–25 Gemini calls across several
+  transcripts in quick succession, which hit HTTP 429 on the free tier. Fixed with a process-wide
+  minimum interval between calls (4.5s default) plus honoring `Retry-After` on 429s.
+* **Grounding check works as designed**: every extracted guidance quote is verified
+  (whitespace-normalised) against the actual page text before being kept. Live runs on TCS and
+  PIDILITIND transcripts each dropped 1-2 items that cited the wrong page or didn't match
+  verbatim — these are the mechanism catching itself, not failures.
+* **Real bug caught and fixed via live testing**: a guidance item describing a "150–200 basis
+  points" wage-hike *impact* was initially compared directly against an absolute margin *level*
+  (25.67%), producing a wrong `fell_short` verdict. Fixed by requiring the comparison's unit to be
+  a percentage **level** (not a basis-point/percentage-point **delta**) before verdicting;
+  otherwise the row reports `no_evidence` with an explanation of the unit mismatch. See
+  `research/comparison.py` (`LEVEL_UNITS`/`DELTA_UNITS`) and its regression test.
+* **Verified on two companies**: HAVELLS (18-stock demo portfolio) and PIDILITIND (outside the
+  portfolio, proving the pipeline generalises). PIDILITIND produced a genuine `met` verdict —
+  guided EBITDA margin 20–24% for FY2026, actual 23.24% — fully cited back to the transcript page
+  and the NSE filing. TCS (also tested) mostly produced `no_guidance`/`pending` rows, which is an
+  honest reflection of its management giving long-term qualitative aspirations rather than
+  quarter-specific numeric commitments, not a pipeline failure.

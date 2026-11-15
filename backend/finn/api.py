@@ -257,6 +257,41 @@ def refresh():
     return {"started": True, "status": refresher.status}
 
 
+# ---------------------------------------------------------------- research (PULL)
+@app.get("/api/research/{symbol}")
+def research(symbol: str, max_transcripts: int = Query(4, ge=1, le=8), p: Pipeline = Depends(get_pipeline)):
+    """Generic PULL research for any NSE ticker Screener lists -- not limited to the portfolio.
+    A symbol's FIRST call downloads and reads its transcripts (roughly 1-2 minutes: PDF text
+    extraction plus a handful of Gemini calls, paced to stay under free-tier rate limits).
+    Everything is cached by document hash and prompt, so repeat calls for the same symbol are
+    fast. Numbers always come from results/service.py's filing parsers, never from the LLM."""
+    import time
+
+    from .llm.client import GeminiClient
+    from .research.service import ResearchService
+    from .results.service import ResultsService
+
+    t0 = time.monotonic()
+    svc = ResearchService(p.conn, p.http, ResultsService(p.http, screener=p.documents), GeminiClient(),
+                          max_transcripts=max_transcripts)
+    report = svc.research(symbol)
+    repo.log_fetch(p.conn, "research", symbol.upper(), True,
+                   f"{len(report.comparison)} comparison rows, {len(report.coverage)} transcripts")
+    return {**report.model_dump(mode="json"), "seconds": round(time.monotonic() - t0, 1)}
+
+
+@app.get("/api/evidence/{evidence_id}")
+def evidence(evidence_id: str, p: Pipeline = Depends(get_pipeline)):
+    """Tap-through for any evidence_id cited by a fact or a guidance item: the exact supporting
+    text plus where it came from, so a number or quote in the UI is never taken on trust alone."""
+    from .research.evidence import get_evidence
+
+    e = get_evidence(p.conn, evidence_id)
+    if e is None:
+        raise HTTPException(404, f"evidence {evidence_id} not found")
+    return e
+
+
 # ---------------------------------------------------------------- alerts
 class AlertRuleCreate(BaseModel):
     kind: str = Field(pattern="^(price_move|volume_spike|category)$")

@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault("FINN_REFRESHER", "0")
+os.environ.setdefault("FINN_LLM_MIN_INTERVAL", "0")
 import json
 from datetime import datetime, timezone
 from pathlib import Path

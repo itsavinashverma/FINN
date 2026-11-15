@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -25,6 +26,20 @@ from ..errors import SourceUnavailable
 log = logging.getLogger(__name__)
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+
+# Shared across every GeminiClient instance in the process: there is one API key and one
+# per-minute quota, regardless of how many ResearchService/GeminiClient objects get constructed.
+_pace_lock = threading.Lock()
+_last_call_at = 0.0
+
+
+def _pace(min_interval: float) -> None:
+    global _last_call_at
+    with _pace_lock:
+        wait = _last_call_at + min_interval - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_call_at = time.monotonic()
 
 
 class LLMUnavailable(SourceUnavailable):
@@ -71,6 +86,7 @@ class GeminiClient:
         usage = {}
         parsed: dict | None = None
         for attempt in range(self.retries + 1):
+            _pace(settings.llm_min_interval_s)
             try:
                 r = requests.post(url, json=body, timeout=self.timeout)
             except requests.RequestException as e:
@@ -79,7 +95,10 @@ class GeminiClient:
                 continue
             if r.status_code == 429 or r.status_code >= 500:
                 last_err = SourceUnavailable(f"gemini: HTTP {r.status_code}", source="gemini")
-                time.sleep(2.0 * (attempt + 1))
+                # 429 is a per-minute quota, not a momentary blip -- back off longer than for a 5xx.
+                retry_after = r.headers.get("Retry-After")
+                delay = float(retry_after) if retry_after else (8.0 if r.status_code == 429 else 2.0) * (attempt + 1)
+                time.sleep(delay)
                 continue
             if r.status_code != 200:
                 raise LLMUnavailable(f"gemini: HTTP {r.status_code}: {r.text[:200]}", source="gemini")

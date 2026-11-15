@@ -15,10 +15,11 @@ SCHEMA = {"type": "object", "properties": {"x": {"type": "string"}}, "required":
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text=""):
+    def __init__(self, status_code=200, payload=None, text="", headers=None):
         self.status_code = status_code
         self._payload = payload
         self.text = text or json.dumps(payload or {})
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -86,6 +87,21 @@ def test_malformed_response_shape_raises(conn, monkeypatch):
     monkeypatch.setattr("finn.llm.client.requests.post", lambda *a, **k: FakeResponse(200, {"unexpected": "shape"}))
     with pytest.raises(LLMUnavailable, match="unexpected response shape"):
         GeminiClient(retries=0).generate_json(conn, system="s", user="u", schema=SCHEMA, prompt_version="v1")
+
+
+def test_429_honours_retry_after_header(conn, monkeypatch):
+    monkeypatch.setattr("finn.llm.client.settings", replace(settings, gemini_api_key="fake-key"))
+    sleeps = []
+    monkeypatch.setattr("finn.llm.client.time.sleep", lambda s: sleeps.append(s))
+    attempts = {"n": 0}
+    def flaky(*a, **k):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return FakeResponse(429, text="rate limited", headers={"Retry-After": "7"})
+        return FakeResponse(200, gemini_payload({"x": "ok"}))
+    monkeypatch.setattr("finn.llm.client.requests.post", flaky)
+    result = GeminiClient(retries=1).generate_json(conn, system="s", user="u", schema=SCHEMA, prompt_version="v1")
+    assert result.data == {"x": "ok"} and 7.0 in sleeps
 
 
 def test_retries_then_succeeds_on_5xx(conn, monkeypatch):

@@ -75,6 +75,59 @@ CREATE TABLE IF NOT EXISTS alert(
 );
 CREATE INDEX IF NOT EXISTS alert_time ON alert(triggered_at);
 
+-- ---------------------------------------------------------------- research (PULL)
+CREATE TABLE IF NOT EXISTS doc_page(
+    document_id INTEGER NOT NULL REFERENCES document(id),
+    page_no INTEGER NOT NULL,
+    text TEXT NOT NULL, char_count INTEGER NOT NULL,
+    PRIMARY KEY(document_id, page_no)
+);
+
+-- Plain (non content-linked) FTS5 index: populated alongside doc_page at extraction time.
+-- No vector DB needed -- lexical search over evidence text is sufficient for quote lookup.
+CREATE VIRTUAL TABLE IF NOT EXISTS doc_page_fts USING fts5(
+    document_id UNINDEXED, page_no UNINDEXED, text
+);
+
+CREATE TABLE IF NOT EXISTS evidence(
+    id TEXT PRIMARY KEY,                -- sha256(symbol|document_name|page|text)[:24]
+    symbol TEXT NOT NULL,
+    document_id INTEGER REFERENCES document(id),   -- NULL for structured filings (no PDF page)
+    document_name TEXT NOT NULL,        -- human label, e.g. "Q2 FY27 earnings call transcript"
+    source_url TEXT NOT NULL,
+    page_number INTEGER,                -- NULL when the source is a structured filing, not a page
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fact(
+    evidence_id TEXT NOT NULL REFERENCES evidence(id),
+    symbol TEXT NOT NULL, metric TEXT NOT NULL, value REAL, unit TEXT NOT NULL,
+    period_end TEXT NOT NULL, period_type TEXT NOT NULL, basis TEXT NOT NULL,
+    source TEXT NOT NULL,               -- nse_xbrl | screener | screener_table
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(symbol, metric, period_end, basis, source)
+);
+CREATE INDEX IF NOT EXISTS fact_symbol ON fact(symbol, period_end);
+
+CREATE TABLE IF NOT EXISTS guidance(
+    id TEXT PRIMARY KEY,                -- sha256(symbol|document_id|quote)[:24]
+    evidence_id TEXT NOT NULL REFERENCES evidence(id),
+    symbol TEXT NOT NULL,
+    document_id INTEGER REFERENCES document(id),
+    said_in_period TEXT,                -- the quarter the call itself discussed (period_end date)
+    quote TEXT NOT NULL,                -- verbatim management statement; verified against the page
+    metric TEXT,                        -- canonical metric key, NULL if not identifiable
+    guidance_type TEXT NOT NULL,        -- numeric | qualitative
+    target_low REAL, target_high REAL, target_unit TEXT,
+    target_period_text TEXT,            -- as spoken, e.g. "FY2027", "the next two to three years"
+    target_period_end TEXT,             -- resolved date, NULL if the phrase was unresolved
+    measurable INTEGER NOT NULL,        -- computed in Python from guidance_type + target_low, never trusted from the LLM alone
+    speaker TEXT,
+    extracted_at TEXT NOT NULL, prompt_version TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS guidance_symbol ON guidance(symbol, target_period_end);
+
 CREATE TABLE IF NOT EXISTS fetch_log(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL, target TEXT, ok INTEGER NOT NULL, detail TEXT, at TEXT NOT NULL

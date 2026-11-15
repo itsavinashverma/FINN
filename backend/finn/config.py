@@ -51,6 +51,10 @@ class Settings:
     gemini_model: str = os.getenv("FINN_GEMINI_MODEL", "gemini-flash-lite-latest")
     llm_timeout_s: float = float(os.getenv("FINN_LLM_TIMEOUT", "25"))
     llm_retries: int = int(os.getenv("FINN_LLM_RETRIES", "2"))
+    # Research can fire ~20 calls across several transcripts in a few seconds; the free tier's
+    # per-minute quota (observed 2026-11-15: a burst of ~20 calls hit HTTP 429) needs pacing, not
+    # just retries. 4.5s keeps a sustained run under ~13 calls/min.
+    llm_min_interval_s: float = float(os.getenv("FINN_LLM_MIN_INTERVAL", "4.5"))
 
     @property
     def db_path(self) -> Path:

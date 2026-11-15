@@ -136,6 +136,40 @@ class ResultsService:
             card.warnings.insert(0, f"NSE filing data unavailable ({nse_error}); figures are Screener's compilation")
             return card
 
+    def last_n_quarters(self, symbol: str, n: int = 4,
+                        basis: StatementBasis = StatementBasis.CONSOLIDATED) -> tuple[list[tuple[Headline, str]], str, list[str]]:
+        """Up to the last `n` *reported* quarters' headline numbers, newest first, each paired
+        with the URL it came from. Used by the research engine to gather facts for comparison
+        against guidance -- never invents a quarter that wasn't actually filed."""
+        try:
+            refs = self.list_filings(symbol)
+            periods = sorted({r.period_end for r in refs}, reverse=True)[:n]
+            by_key = {(r.period_end, r.basis): r for r in refs}
+            warnings: list[str] = []
+            out = []
+            for pe in periods:
+                chosen, note = choose_basis(refs, pe, basis)
+                if note:
+                    warnings.append(note)
+                ref = by_key[(pe, chosen)]
+                out.append((self.headline(ref), ref.xbrl_url))
+            return out, "nse_xbrl", warnings
+        except (SourceUnavailable, NotFound) as nse_error:
+            if self.screener is None:
+                raise
+            log.info("last_n_quarters for %s: NSE unavailable (%s); using Screener", symbol, nse_error)
+            from ..fundamentals.screener_tables import parse_tables
+            from .screener_fallback import screener_headline
+
+            page = self.screener.page(symbol, prefer=basis, cache_ttl=timedelta(hours=1))
+            fin = parse_tables(page.text, symbol, page.url, page.fetched_at)
+            q = fin.tables.get("quarters")
+            periods = sorted((d for d in q.period_ends if d), reverse=True)[:n] if q else []
+            if not periods:
+                raise NotFound(f"screener: no quarterly results for {symbol}", source="screener") from nse_error
+            out = [(h, page.url) for pe in periods if (h := screener_headline(fin, pe)) is not None]
+            return out, "screener", [f"NSE filing data unavailable ({nse_error}); figures are Screener's compilation"]
+
     def _card_from_screener(self, symbol: str, period_end: date | None, basis: StatementBasis) -> ResultsCard:
         from ..fundamentals.screener_tables import parse_tables
         from .screener_fallback import screener_headline

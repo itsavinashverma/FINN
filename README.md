@@ -245,3 +245,4 @@ response shapes field-by-field, not by rendering the UI in an automated test.
   testing a company outside the demo portfolio during a deliberate adversarial review, and fixed:
   one transcript's extraction failure now degrades to a partial-coverage note instead of discarding
   already-successful results from other transcripts of the same company.
+. 

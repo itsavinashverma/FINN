@@ -6,7 +6,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-from . import repo
+from . import alert_repo, repo
+from .alerts import Alert, evaluate_category, evaluate_price_move, evaluate_volume_spike
 from .announcements.base import AnnouncementProvider, CompanyRef
 from .announcements.bse import BseAnnouncements
 from .announcements.classify import classify
@@ -149,6 +150,45 @@ class Pipeline:
                 changed += 1
         self.conn.commit()
         return changed
+
+    # ------------------------------------------------------------ alerts
+    def evaluate_alerts(self, symbols: list[str], ann_start: date, ann_end: date,
+                       now: datetime | None = None) -> list[Alert]:
+        """Check every enabled rule against the latest stored price/volume metrics and the
+        announcement window just ingested. Storing is idempotent, so calling this repeatedly
+        (every refresher tick) never produces duplicate alerts for the same day or filing."""
+        now = now or datetime.now(timezone.utc)
+        rules = alert_repo.list_rules(self.conn, enabled_only=True)
+        price_rules = [r for r in rules if r.kind == "price_move"]
+        volume_rules = [r for r in rules if r.kind == "volume_spike"]
+        category_rules = [r for r in rules if r.kind == "category"]
+        fired: list[Alert] = []
+
+        if price_rules or volume_rules:
+            for sym in symbols:
+                series = repo.load_series(self.conn, sym, Exchange.NSE)
+                if not series:
+                    continue
+                m = compute_metrics(series, now)
+                for rule in price_rules:
+                    a = evaluate_price_move(rule, sym, m)
+                    if a and alert_repo.store_alert(self.conn, a):
+                        fired.append(a)
+                for rule in volume_rules:
+                    a = evaluate_volume_spike(rule, sym, m)
+                    if a and alert_repo.store_alert(self.conn, a):
+                        fired.append(a)
+
+        if category_rules:
+            lo = datetime.combine(ann_start, datetime.min.time(), IST)
+            hi = datetime.combine(ann_end, datetime.max.time(), IST) + timedelta(days=1)
+            rows = repo.query_announcements(self.conn, start=lo, end=hi, symbols=symbols)
+            for row in rows:
+                for rule in category_rules:
+                    a = evaluate_category(rule, row)
+                    if a and alert_repo.store_alert(self.conn, a):
+                        fired.append(a)
+        return fired
 
     # ------------------------------------------------------------ documents
     def discover_documents(self, symbol: str) -> dict:

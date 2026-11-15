@@ -78,6 +78,8 @@ class DigestItem(BaseModel):
     needs_review: bool = False
     results: dict | None = None               # ResultsCard for results items
     results_error: str | None = None
+    summary: dict | None = None                # AnnouncementSummary (LLM, facts/interpretation split)
+    summary_error: str | None = None
 
 
 class Digest(BaseModel):

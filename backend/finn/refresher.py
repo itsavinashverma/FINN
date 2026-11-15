@@ -52,10 +52,11 @@ class Refresher:
                     except FinnError as e:
                         price_errors.append(f"{s}: {e}")
                 self.market_holder["market"] = p._market
+                fired = p.evaluate_alerts(syms, end - timedelta(days=days), end)
                 self.status["last_report"] = {
                     "days": days, "fetched": report.fetched, "inserted": report.inserted,
                     "duplicates": report.duplicates, "reclassified": reclassified, "source_errors": len(report.errors),
-                    "price_errors": price_errors,
+                    "price_errors": price_errors, "alerts_fired": len(fired),
                 }
                 self.status["last_error"] = None
             finally:

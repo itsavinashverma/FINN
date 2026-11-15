@@ -12,12 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import db, repo
+from . import alert_repo, db, repo
+from .alerts import AlertRule
 from .config import IST
 from .errors import FinnError, NotFound, ParseError, SourceUnavailable
 from .http import HttpClient
 from .log import setup_logging
-from .models import Exchange, StatementBasis
+from .models import Category, Exchange, StatementBasis
 from .pipeline import Pipeline
 from .refresher import Refresher
 from . import digest as digest_mod, portfolio
@@ -205,6 +206,8 @@ def get_digest(
     start: datetime | None = Query(None, alias="from"),
     end: datetime | None = Query(None, alias="to"),
     with_results: bool = True,
+    with_summaries: bool = Query(False, description="LLM one-line summaries for the notable tier (adds latency/cost)"),
+    max_summaries: int = Query(8, ge=0, le=30, description="cap on LLM calls per digest request"),
     p: Pipeline = Depends(get_pipeline),
 ):
     end = end or datetime.now(timezone.utc)
@@ -224,6 +227,21 @@ def get_digest(
                     item.results = svc.card(item.symbol).model_dump(mode="json")
                 except FinnError as e:
                     item.results_error = str(e)
+    if with_summaries:
+        from .llm.client import GeminiClient
+        from .llm.summarize import summarize
+
+        client = GeminiClient()
+        # Notable tier only: critical items already carry a results card or speak for themselves,
+        # and routine items are collapsed, not worth the model call.
+        candidates = [i for i in items if i.tier == "notable"][:max_summaries]
+        for item in candidates:
+            row = p.conn.execute("SELECT * FROM announcement WHERE source=? AND source_id=?",
+                                 (item.lead.source, item.lead.source_id)).fetchone()
+            try:
+                item.summary = summarize(repo.row_to_announcement(row), client, p.conn).model_dump(mode="json")
+            except FinnError as e:
+                item.summary_error = str(e)
     status = {"refresher": refresher.status, "sources": repo.source_status(p.conn)}
     return digest_mod.assemble(items, {"from": start.isoformat(), "to": end.isoformat()}, status)
 
@@ -237,6 +255,113 @@ def status(p: Pipeline = Depends(get_pipeline)):
 def refresh():
     threading.Thread(target=refresher.run_once, daemon=True).start()
     return {"started": True, "status": refresher.status}
+
+
+# ---------------------------------------------------------------- alerts
+class AlertRuleCreate(BaseModel):
+    kind: str = Field(pattern="^(price_move|volume_spike|category)$")
+    symbol: str | None = Field(None, description="NSE symbol this rule watches; omit for the whole portfolio")
+    threshold: float | None = Field(None, description="percent for price_move, multiplier (x) for volume_spike")
+    categories: list[str] | None = Field(None, description="glossary categories to watch, for kind='category'")
+    enabled: bool = True
+
+
+class AlertRuleUpdate(BaseModel):
+    symbol: str | None = None
+    threshold: float | None = None
+    categories: list[str] | None = None
+    enabled: bool | None = None
+
+
+def _validate_rule_shape(kind: str, threshold: float | None, categories: list[str] | None) -> None:
+    if kind in ("price_move", "volume_spike"):
+        if threshold is None or threshold <= 0:
+            raise HTTPException(422, f"'{kind}' rules need a positive threshold "
+                                     f"({'%' if kind == 'price_move' else 'x multiplier'})")
+    elif kind == "category":
+        if not categories:
+            raise HTTPException(422, "'category' rules need a non-empty 'categories' list")
+        known = {c.value for c in Category}
+        bad = set(categories) - known
+        if bad:
+            raise HTTPException(422, f"unknown categories: {sorted(bad)}; valid values are {sorted(known)}")
+
+
+@app.get("/api/alert-rules")
+def list_alert_rules(p: Pipeline = Depends(get_pipeline)):
+    return {"rules": alert_repo.list_rules(p.conn)}
+
+
+@app.post("/api/alert-rules")
+def create_alert_rule(body: AlertRuleCreate, p: Pipeline = Depends(get_pipeline)):
+    _validate_rule_shape(body.kind, body.threshold, body.categories)
+    rule = alert_repo.create_rule(p.conn, AlertRule(kind=body.kind, symbol=body.symbol, threshold=body.threshold,
+                                                    categories=body.categories, enabled=body.enabled))
+    return rule
+
+
+@app.put("/api/alert-rules/{rule_id}")
+def update_alert_rule(rule_id: int, body: AlertRuleUpdate, p: Pipeline = Depends(get_pipeline)):
+    existing = alert_repo.get_rule(p.conn, rule_id)
+    if not existing:
+        raise HTTPException(404, f"alert rule {rule_id} not found")
+    fields = body.model_dump(exclude_unset=True)
+    _validate_rule_shape(existing.kind, fields.get("threshold", existing.threshold),
+                        fields.get("categories", existing.categories))
+    return alert_repo.update_rule(p.conn, rule_id, **fields)
+
+
+@app.delete("/api/alert-rules/{rule_id}")
+def delete_alert_rule(rule_id: int, p: Pipeline = Depends(get_pipeline)):
+    if not alert_repo.delete_rule(p.conn, rule_id):
+        raise HTTPException(404, f"alert rule {rule_id} not found")
+    return {"deleted": rule_id}
+
+
+@app.get("/api/alerts")
+def list_alerts(
+    since: datetime | None = Query(None, description="ISO timestamp with timezone offset"),
+    symbol: str | None = None, unread_only: bool = False,
+    limit: int = Query(200, ge=1, le=1000), p: Pipeline = Depends(get_pipeline),
+):
+    if since and since.tzinfo is None:
+        raise HTTPException(422, "'since' must include a timezone offset")
+    items = alert_repo.query_alerts(p.conn, since=since, symbol=symbol, unread_only=unread_only, limit=limit)
+    return {"count": len(items), "items": items}
+
+
+@app.post("/api/alerts/{alert_id}/read")
+def read_alert(alert_id: int, p: Pipeline = Depends(get_pipeline)):
+    if not alert_repo.mark_read(p.conn, alert_id):
+        raise HTTPException(404, f"alert {alert_id} not found or already read")
+    return {"id": alert_id, "read": True}
+
+
+@app.post("/api/alerts/evaluate")
+def evaluate_alerts_now(days: int = Query(7, ge=1, le=90), p: Pipeline = Depends(get_pipeline)):
+    """Evaluate all enabled rules against currently stored data (no network calls). Idempotent."""
+    syms = portfolio.symbols(p.conn)
+    end = datetime.now(IST).date()
+    fired = p.evaluate_alerts(syms, end - timedelta(days=days), end)
+    return {"fired": fired}
+
+
+# ---------------------------------------------------------------- LLM summaries
+@app.get("/api/announcements/{source}/{source_id}/summary")
+def announcement_summary(source: str, source_id: str, p: Pipeline = Depends(get_pipeline)):
+    """A one-line, fact/interpretation-separated summary of one filing's own disclosed text.
+    Never used for numbers — results come from /api/results. Cached: repeat calls cost nothing."""
+    from .llm.client import GeminiClient
+    from .llm.summarize import summarize
+
+    row = p.conn.execute("SELECT * FROM announcement WHERE source=? AND source_id=?",
+                         (source.upper(), source_id)).fetchone()
+    if not row:
+        raise HTTPException(404, f"announcement {source}:{source_id} not found")
+    ann = repo.row_to_announcement(row)
+    summary = summarize(ann, GeminiClient(), p.conn)
+    repo.log_fetch(p.conn, "gemini", f"{source}:{source_id}", True, "cached" if summary.cached else "generated")
+    return summary
 
 
 _probe_cache: dict = {}

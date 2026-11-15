@@ -48,6 +48,33 @@ CREATE TABLE IF NOT EXISTS document(
 );
 CREATE INDEX IF NOT EXISTS doc_symbol ON document(symbol, kind, period_sort);
 
+CREATE TABLE IF NOT EXISTS llm_cache(
+    cache_key TEXT PRIMARY KEY, model TEXT NOT NULL, prompt_version TEXT NOT NULL,
+    response TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER, created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert_rule(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,                 -- price_move | volume_spike | category
+    symbol TEXT,                        -- NULL = applies to every portfolio holding
+    threshold REAL,                     -- percent for price_move, multiplier for volume_spike
+    categories TEXT,                    -- JSON list, for kind='category'
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id INTEGER NOT NULL REFERENCES alert_rule(id),
+    kind TEXT NOT NULL, symbol TEXT NOT NULL, message TEXT NOT NULL,
+    value REAL, threshold REAL,
+    as_of_date TEXT, filing_id TEXT,     -- dedup inputs; at least one is set depending on kind
+    dedup_key TEXT NOT NULL,            -- coalesced so SQLite's NULL-is-distinct can't defeat UNIQUE
+    triggered_at TEXT NOT NULL, read_at TEXT,
+    UNIQUE(rule_id, symbol, dedup_key)
+);
+CREATE INDEX IF NOT EXISTS alert_time ON alert(triggered_at);
+
 CREATE TABLE IF NOT EXISTS fetch_log(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL, target TEXT, ok INTEGER NOT NULL, detail TEXT, at TEXT NOT NULL

@@ -46,6 +46,11 @@ class Settings:
     session_final_after: tuple[int, int] = (16, 0)
 
     gemini_api_key: str | None = field(default_factory=lambda: os.getenv("GEMINI_API_KEY") or None)
+    # Verified 2026-11-13: gemini-2.5-* model IDs 404 for this key ("no longer available to new
+    # users"); the "-latest" alias tracks whichever current model the key can use.
+    gemini_model: str = os.getenv("FINN_GEMINI_MODEL", "gemini-flash-lite-latest")
+    llm_timeout_s: float = float(os.getenv("FINN_LLM_TIMEOUT", "25"))
+    llm_retries: int = int(os.getenv("FINN_LLM_RETRIES", "2"))
 
     @property
     def db_path(self) -> Path:

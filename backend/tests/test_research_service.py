@@ -97,6 +97,56 @@ def test_process_transcript_records_download_failure_without_crashing(conn):
     assert cov.status == "failed" and "403" in cov.error and cov.guidance_items_found == 0
 
 
+def test_process_transcript_records_guidance_extraction_failure_without_crashing(conn, monkeypatch):
+    """Regression: a Gemini rate-limit (or any LLM failure) on one transcript must not blow up
+    the whole research() call -- it should degrade to a per-transcript coverage error so whatever
+    else succeeded (other transcripts, facts, comparisons) is still returned. Found live: a 2nd
+    transcript hitting HTTP 429 mid-extraction returned a bare 502 for the entire request even
+    though the 1st transcript's guidance had already been extracted and persisted."""
+    from finn.errors import SourceUnavailable
+
+    svc = _service(conn, _company_docs([]), [])
+    monkeypatch.setattr("finn.research.service.pdf_text.extract_and_cache", lambda conn, doc_id, path: 5)
+    monkeypatch.setattr("finn.research.service.pdf_text.get_pages", lambda conn, doc_id: [{"page_no": 1, "text": "x"}])
+
+    def boom(*a, **k):
+        raise SourceUnavailable("gemini: HTTP 429", source="gemini")
+    monkeypatch.setattr("finn.research.service.gd.extract_guidance", boom)
+
+    row = {"id": 1, "status": "downloaded", "error": None, "period_label": "Nov 2026", "period_sort": "2026-11",
+          "url": "https://bse/t.pdf", "local_path": "/tmp/t.pdf"}
+    cov = svc.process_transcript("TCS", row)
+    assert cov.status == "failed" and "429" in cov.error and cov.guidance_items_found == 0
+
+
+def test_research_still_returns_other_transcripts_when_one_fails_guidance_extraction(conn, monkeypatch):
+    """End-to-end: research() must return 200 with partial coverage, not propagate the failure."""
+    from finn.errors import SourceUnavailable
+
+    refs = [_doc_ref("2026-11", "Nov 2026"), _doc_ref("2026-08", "Aug 2026")]
+    svc = _service(conn, _company_docs(refs), [(_headline("2026-09-30", "Q2 FY27"), "https://nse/x.xml")])
+    for d in refs:
+        conn.execute("""INSERT INTO document(symbol, kind, period_label, period_sort, url, host, discovered_from,
+            discovered_at, status) VALUES ('TCS','transcript',?,?,?,?,?,?,'downloaded')""",
+            (d.period_label, d.period_sort, d.url, "bse", "x", "now"))
+    conn.commit()
+    monkeypatch.setattr("finn.research.service.pdf_text.extract_and_cache", lambda conn, doc_id, path: 5)
+    monkeypatch.setattr("finn.research.service.pdf_text.get_pages", lambda conn, doc_id: [{"page_no": 1, "text": "x"}])
+
+    calls = {"n": 0}
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [], {"pages_scanned": 1, "dropped_ungrounded": 0}
+        raise SourceUnavailable("gemini: HTTP 429", source="gemini")
+    monkeypatch.setattr("finn.research.service.gd.extract_guidance", flaky)
+
+    report = svc.research("TCS")  # must not raise
+    statuses = {c["status"] for c in report.coverage}
+    assert statuses == {"downloaded", "failed"}
+    assert report.reported_periods == ["2026-09-30"]
+
+
 def test_research_reports_no_transcripts_warning_when_none_found(conn):
     svc = _service(conn, _company_docs([]), [(_headline("2026-09-30", "Q2 FY27"), "https://nse/x.xml")])
     report = svc.research("TCS")

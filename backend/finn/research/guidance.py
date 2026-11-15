@@ -22,7 +22,7 @@ import re
 import sqlite3
 from datetime import date, datetime, timezone
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ..llm.client import GeminiClient
 from . import evidence as ev
@@ -157,13 +157,24 @@ def _guidance_id(ticker: str, document_id: int, quote: str, page: int) -> str:
 
 def extract_from_window(client: GeminiClient, conn: sqlite3.Connection, pages: dict[int, str],
                         window: list[int]) -> tuple[list[RawGuidanceItem], int]:
-    """One LLM call per window. Returns (validated items, number of items dropped for failing the
-    grounding check). Dropped items are logged, never silently kept."""
+    """One LLM call per window. Returns (validated items, number of items dropped for failing
+    schema validation or the grounding check). Dropped items are logged, never silently kept."""
     text = "\n".join(f"[PAGE {p}]\n{pages[p]}" for p in window)
     result = client.generate_json(conn, system=SYSTEM, user=text, schema=SCHEMA, prompt_version=PROMPT_VERSION)
-    raw_items = [RawGuidanceItem(**d) for d in result.data.get("items", [])]
 
-    kept, dropped = [], 0
+    raw_items: list[RawGuidanceItem] = []
+    dropped = 0
+    for d in result.data.get("items", []):
+        try:
+            raw_items.append(RawGuidanceItem(**d))
+        except ValidationError as e:
+            # Schema-constrained decoding is reliable but not guaranteed; one malformed item must
+            # not take down the rest of this window (or, before this fix, the whole document --
+            # ValidationError isn't a FinnError, so it skipped the per-transcript error handling too).
+            dropped += 1
+            log.warning("guidance item failed schema validation, dropped: %s (%r)", e, d)
+
+    kept = []
     for item in raw_items:
         page_text = pages.get(item.page)
         if page_text is None or not _is_grounded(item.quote, page_text):

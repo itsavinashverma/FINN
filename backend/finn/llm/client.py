@@ -111,6 +111,7 @@ class GeminiClient:
                 raise LLMUnavailable(f"gemini: unexpected response shape: {e}", source="gemini") from e
             break
         if parsed is None:
+            log.warning("gemini: request failed after %d retries: %s", self.retries, last_err)
             raise LLMUnavailable(f"gemini: request failed after retries: {last_err}", source="gemini") from last_err
 
         conn.execute(

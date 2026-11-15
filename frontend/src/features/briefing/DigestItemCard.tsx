@@ -26,8 +26,8 @@ export function DigestItemCard({ item }: { item: DigestItem }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            {item.symbol && <span className="text-[13px] font-semibold text-ink">{item.symbol}</span>}
-            <span className="truncate text-[13px] text-ink-dim">{item.company}</span>
+            {item.symbol && <span className="shrink-0 text-[13px] font-semibold text-ink">{item.symbol}</span>}
+            <span className="min-w-0 truncate text-[13px] text-ink-dim">{item.company}</span>
           </div>
           <p className="mt-0.5 text-sm font-medium leading-snug text-ink">{item.title}</p>
         </div>
@@ -109,7 +109,7 @@ export function DigestItemCard({ item }: { item: DigestItem }) {
         <ul className="mt-2 space-y-1.5 border-t border-border-subtle pt-2">
           {item.related.map((r) => (
             <li key={`${r.source}:${r.source_id}`} className="flex items-center justify-between gap-2 text-[12px]">
-              <span className="truncate text-ink-dim">{r.title}</span>
+              <span className="min-w-0 truncate text-ink-dim">{r.title}</span>
               {(r.document_url ?? r.filing_url) && (
                 <a href={r.document_url ?? r.filing_url ?? "#"} target="_blank" rel="noreferrer" className="shrink-0 text-accent hover:text-accent-ink">
                   <ExternalLink className="h-3 w-3" strokeWidth={2} />

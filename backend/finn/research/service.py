@@ -111,9 +111,18 @@ class ResearchService:
         pages = pdf_text.get_pages(self.conn, row["id"])
         said_in = self._said_in_period(pages, row["period_sort"])
         doc_name = f"{row['period_label']} earnings call transcript"
-        items, stats = gd.extract_guidance(self.conn, self.llm, ticker=symbol, document_id=row["id"],
-                                           document_name=doc_name, source_url=row["url"], pages=pages,
-                                           said_in_period=said_in)
+        try:
+            items, stats = gd.extract_guidance(self.conn, self.llm, ticker=symbol, document_id=row["id"],
+                                               document_name=doc_name, source_url=row["url"], pages=pages,
+                                               said_in_period=said_in)
+        except FinnError as e:
+            # A transient LLM failure (e.g. a rate limit) on this one transcript must not discard
+            # whatever other transcripts/facts already succeeded -- report it as partial coverage,
+            # not a 502 for the whole report. Any windows already extracted before the failure are
+            # still persisted (each window commits independently in guidance.extract_guidance).
+            log.warning("guidance extraction failed for %s %s: %s", symbol, row["period_label"], e)
+            cov.status, cov.error = "failed", str(e)
+            return cov
         cov.guidance_items_found = len(items)
         cov.pages_scanned = stats["pages_scanned"]
         cov.dropped_ungrounded = stats["dropped_ungrounded"]

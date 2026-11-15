@@ -15,7 +15,7 @@ type Tab = "watchlist" | "alerts"
 
 export function PortfolioPage() {
   const [tab, setTab] = useState<Tab>("watchlist")
-  const { data, isPending, isError, error, refetch, dataUpdatedAt } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ["portfolio"],
     queryFn: getPortfolio,
   })
@@ -44,7 +44,9 @@ export function PortfolioPage() {
           {data && (
             <>
               <div className="flex items-center justify-end">
-                <StaleTag retrievedAt={new Date(dataUpdatedAt).toISOString()} staleAfterMinutes={20} />
+                {/* The refresher's own last-success time -- a page load right after a stalled
+                   refresher must still read as stale, not "just now". */}
+                <StaleTag retrievedAt={data.refresher.last_finished} staleAfterMinutes={90} />
               </div>
               {data.holdings.length === 0 ? (
                 <EmptyState icon={Briefcase} title="No holdings yet" description="Add NSE symbols to your portfolio to start tracking them." />

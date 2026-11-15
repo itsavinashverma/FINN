@@ -92,6 +92,22 @@ def test_extract_from_window_drops_ungrounded_items(conn):
     assert kept[0].target_low == 20.0
 
 
+def test_extract_from_window_drops_malformed_item_without_crashing(conn):
+    """Regression: a single item failing Pydantic validation (e.g. an unexpected type for
+    guidance_type) must not raise -- that would skip the FinnError-only handling in
+    ResearchService.process_transcript and take down the whole document's/research call's
+    results, not just this one malformed item."""
+    client = StubClient([{"items": [
+        {"quote": "we expect to maintain our EBITDA margin in the 20% to 24% band for FY2027.",
+         "page": 2, "guidance_type": "numeric", "target_low": 20.0, "target_high": 24.0, "target_unit": "percent"},
+        {"quote": "missing the required guidance_type field entirely", "page": 2},
+    ]}])
+    pages = {p["page_no"]: p["text"] for p in PAGES}
+    kept, dropped = gd.extract_from_window(client, conn, pages, [1, 2, 3])
+    assert len(kept) == 1 and dropped == 1
+    assert kept[0].target_low == 20.0
+
+
 def test_extract_from_window_drops_item_citing_a_page_outside_the_window(conn):
     client = StubClient([{"items": [{"quote": "we expect to maintain our EBITDA margin in the 20% to 24% band for FY2027.",
                                     "page": 99, "guidance_type": "numeric", "target_low": 20.0}]}])

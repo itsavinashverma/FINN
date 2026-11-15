@@ -14,7 +14,7 @@ import type { WindowOption } from "./WindowPicker"
 export function BriefingPage() {
   const [hours, setHours] = useState<WindowOption>("24")
 
-  const { data, isPending, isError, error, refetch, isFetching, dataUpdatedAt } = useQuery({
+  const { data, isPending, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["digest", hours],
     queryFn: () => getDigest(Number(hours), { withSummaries: true }),
   })
@@ -42,7 +42,9 @@ export function BriefingPage() {
               {data.counts.critical} critical · {data.counts.notable} notable · {data.counts.routine} routine
               {isFetching && " · refreshing…"}
             </span>
-            <StaleTag retrievedAt={new Date(dataUpdatedAt).toISOString()} staleAfterMinutes={20} />
+            {/* The background refresher's own last-success time, not when the browser happened to
+               fetch -- a page load right after a stalled refresher must still read as stale. */}
+            <StaleTag retrievedAt={data.status.refresher.last_finished} staleAfterMinutes={90} />
           </div>
 
           {data.counts.critical + data.counts.notable + data.counts.routine === 0 ? (
